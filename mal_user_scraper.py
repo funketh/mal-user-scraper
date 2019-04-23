@@ -1,32 +1,45 @@
 # NOTE: This script only scrapes Anime related data
-import time
-from collections import namedtuple
-
 import re
 import sqlite3
+import time
+import traceback
+from argparse import ArgumentParser
+from collections import namedtuple
 from datetime import datetime, timedelta
-from selenium.webdriver import Firefox
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.wait import WebDriverWait
 from typing import Optional, List
 
-# Each page contains 24 users
-USER_PAGES = 67
-# Delay in seconds between the individual user page requests
-# Decreasing this increases the speed of the script but puts a higher load on the MAL servers
-DELAY = 0.3
-DATABASE_FILENAME = 'users.db'
+from selenium.webdriver import Firefox, FirefoxProfile
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.wait import WebDriverWait
 
 def main():
-    driver = Firefox()
+    parser = ArgumentParser()
+    parser.add_argument("-p", "--pages", dest="pages", type=int, default=1,
+                        help="how many pages of users to scrape (1 page = 24 users)")
+    parser.add_argument("-d", "--delay", dest="delay", type=float, default=0.3,
+                        help="delay in seconds between the user page requests")
+    parser.add_argument("-db", "--database",
+                        action="store_false", dest="db", default='users.db',
+                        help="file path of the sqlite3 database")
+    args = parser.parse_args()
+    profile = FirefoxProfile()
+    # Disable images
+    profile.set_preference('permissions.default.image', 2)
+    driver = Firefox(profile)
     login(driver)
     search(driver)
-    user_urls = [time.sleep(DELAY) or url
-                 for page in fetch_pages(driver)
+    user_urls = [time.sleep(args.delay) or url
+                 for page in fetch_pages(driver, args.pages)
                  for url in fetch_users(page)]
-    users = [time.sleep(DELAY) or get_user_data(driver, url)
-             for url in user_urls]
-    save_to_db(users)
+    users = []
+    for url in user_urls:
+        try:
+            users.append(get_user_data(driver, url))
+        except Exception:
+            traceback.print_exc()
+            print('\nIgnoring exception (url=' + url + ')')
+        time.sleep(args.delay)
+    save_to_db(args.db, users)
 
 def login(driver):
     login_url = 'https://myanimelist.net/login.php'
@@ -41,9 +54,9 @@ def search(driver):
     WebDriverWait(driver, 600).until(EC.url_changes(search_url))
     time.sleep(3)
 
-def fetch_pages(driver):
+def fetch_pages(driver, page_count):
     yield driver.page_source
-    for x in range(1, USER_PAGES):
+    for x in range(1, page_count):
         driver.get(driver.current_url + '&show=' + str(x * 24))
         yield driver.page_source
 
@@ -64,14 +77,14 @@ def get_user_data(driver, url) -> User:
         gender=safe_re_search(r"Gender</span>.*?>(.*?)</span>", p),
         birthday=to_date(mal_to_datetime(safe_re_search(r"Birthday</span>.*?>(.*?)</span>", p))),
         location=safe_re_search(r"Location</span>.*?>(.*?)</span>", p),
-        joined=to_date(mal_to_datetime(safe_re_search(r'Joined</span><span class="user-status-data di-ib fl-r">(.*?)<', p))),
-        shared=int(safe_re_search(r'class="fs11">(\d+?) Shared', p)),
+        joined=to_date(
+            mal_to_datetime(safe_re_search(r'Joined</span><span class="user-status-data di-ib fl-r">(.*?)<', p))),
+        shared=safe_int(safe_re_search(r'class="fs11">(\d+?) Shared', p)),
         affinity=scrape_affinity(p),
-        friend_count=int(safe_re_search(r'All \((\d+?)\)</a>Friends</h4>', p)),
-        days=float(safe_re_search(r'Anime Stats</h5>\s*<.*?>\s*<.*?><.*?>Days: </span>(\d+\.*\d*)</div>', p)),
-        mean_score=float(safe_re_search(r'Anime Stats</h5>\s*<.*?>\s*<.*?><.*?>.*?<.*?>.*?<.*?>\s*<.*?><.*?>'
-                                        r'Mean Score: </span>(\d+\.*\d*)', p)),
-        completed=int(safe_re_search(r'Completed</a><span class="di-ib fl-r lh10">(\d+)', p)),
+        friend_count=safe_int(safe_re_search(r'All \(([\d,]+?)\)</a>Friends</h4>', p)),
+        days=safe_float(safe_re_search(r'Anime Stats</h5>\s*<.*?>\s*<.*?><.*?>Days: </span>([\d,]+\.*\d*)</div>', p)),
+        mean_score=safe_float(safe_re_search(r'Mean Score: </span>([\d,]+\.*\d*)', p)),
+        completed=safe_int(safe_re_search(r'Completed</a><span class="di-ib fl-r lh10">([\d,]+)', p)),
     )
 
 def safe_re_search(*args, **kwargs) -> Optional[str]:
@@ -127,8 +140,16 @@ def scrape_affinity(page):
     if match:
         return float(match.group(1)) or float(match.group(2))
 
-def save_to_db(users):
-    db = sqlite3.connect(DATABASE_FILENAME)
+def safe_int(text: str) -> Optional[int]:
+    if text is not None:
+        return int(text.replace(',', ''))
+
+def safe_float(text: str) -> Optional[float]:
+    if text is not None:
+        return float(text.replace(',', ''))
+
+def save_to_db(db_path, users):
+    db = sqlite3.connect(db_path)
     with db:
         db.execute('''CREATE TABLE IF NOT EXISTS user(
             name TEXT PRIMARY KEY,
