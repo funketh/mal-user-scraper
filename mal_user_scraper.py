@@ -38,20 +38,24 @@ async def main():
     args = parse_cmd_args()
     async with aiohttp.ClientSession() as session:
         await login(session)
-        search_jobs = [users_from_search_page(session, args.pages, args.name, args.location,
-                                              args.older, args.younger, args.gender)]
-        user_urls = ['https://myanimelist.net/profile' + url
+        search_jobs = [users_from_search_page(session, p, args.name, args.location,
+                                              args.older, args.younger, args.gender) for p in range(args.pages)]
+        user_urls = ['https://myanimelist.net' + url
                      for sublist in await asyncio.gather(*search_jobs) for url in sublist]
         user_jobs = [page_text(session, url) for url in user_urls]
         user_pages = await asyncio.gather(*user_jobs)
-        total = len(user_urls)
-        users = []
-        for i, page in enumerate(user_pages):
-            try:
-                users.append(get_user_data(page))
-            except Exception:
-                logging.exception('Ignoring exception: ')
-            progress(i, total)
+    total = len(user_urls)
+    users = []
+    for i, page in enumerate(user_pages):
+        try:
+            users.append(get_user_data(page))
+        except Exception:
+            logging.exception('Ignoring exception: ')
+        progress(i, total)
+    try:
+        check_if_no_affinities(users)
+    except WantsToExit:
+        return
     save_to_db(args.db, users)
 
 
@@ -196,6 +200,17 @@ def safe_int(text: str) -> Optional[int]:
 def safe_float(text: str) -> Optional[float]:
     if text is not None:
         return float(text.replace(',', ''))
+
+
+class WantsToExit(BaseException): pass
+
+def check_if_no_affinities(users):
+    if not any(u.affinity is not None for u in users):
+        answer = input('No Affinities could be fetched. '
+                       'This could mean that your login was unsuccessful. '
+                       'Do you want to save the data anyway? (y/N): ')
+        if answer.lower() not in ('y', 'yes'):
+            raise WantsToExit
 
 
 # Database
