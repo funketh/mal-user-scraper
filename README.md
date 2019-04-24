@@ -4,13 +4,14 @@ Scrapes information from [myanimelist.net](https://myanimelist.net/) profile pag
 This is an inofficial script so you could get banned if you scrape to many pages of users because the script is very fast.
 Use at your own risk!
 # Requirements
-* [Python](https://www.python.org/downloads/) version 3.7 or higher
+* [Python](https://www.python.org/) version 3.7 or higher
 * [aiohttp](https://pypi.org/project/aiohttp/) library
 * A myanimelist.net account
 * (Probably) some way to view the sqlite3 database (I recommend [DB Browser for SQLite](https://sqlitebrowser.org/))
-# Instructions
+# Usage
 1. Run `python3.7 mal_user_scraper.py` (for command line arguments, view below)
 2. Input your username and password when asked
+3. The scraped data will be saved in an sqlite3 database
 # Command Line Arguments
 ```
 usage: mal_user_scraper.py [-h] [-n NAME] [-o OLDER] [-y YOUNGER]
