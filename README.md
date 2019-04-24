@@ -9,14 +9,13 @@ Use at your own risk!
 * A myanimelist.net account
 * (Probably) some way to view the sqlite3 database (I recommend [DB Browser for SQLite](https://sqlitebrowser.org/))
 # Usage
-1. Run `python3.7 mal_user_scraper.py` (for command line arguments, view below)
+1. Run `malscrape.py` with python 3.7 (for command line arguments, view below) (You might have to make it executable first using `chmod +x malscrape.py`)
 2. Input your username and password when asked
 3. The scraped data will be saved in an sqlite3 database
 # Command Line Arguments
 ```
-usage: mal_user_scraper.py [-h] [-n NAME] [-o OLDER] [-y YOUNGER]
-                           [-l LOCATION] [-g GENDER] [-p PAGES] [-d DELAY]
-                           [-db]
+usage: malscrape.py [-h] [-n NAME] [-o OLDER] [-y YOUNGER] [-l LOCATION]
+                    [-g GENDER] [-f FROM_PAGE] [-t TO_PAGE] [-db DB]
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -30,11 +29,15 @@ optional arguments:
   -g GENDER, --gender GENDER
                         found users must be of this gender_id (0=irrelevant,
                         1=male, 2=female, 3=non-binary}
-  -p PAGES, --pages PAGES
-                        how many pages of users to scrape (1 page = 24 users)
-  -d DELAY, --delay DELAY
-                        delay in seconds between the user page requests
-  -db, --database       file path of the sqlite3 database
+  -f FROM_PAGE, --from FROM_PAGE
+                        lower boundary of the search pages to scrape
+                        (boundaries are included)
+  -t TO_PAGE, --to TO_PAGE
+                        upper boundary of the search pages to scrape
+                        (boundaries are included)
+  -db DB, --database DB
+                        file path of the sqlite3 database
+
 ```
 # To-Do
 * favorite anime
