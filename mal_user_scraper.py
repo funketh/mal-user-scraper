@@ -43,7 +43,7 @@ async def main():
         search_jobs = [users_from_search_page(session, p, args.name, args.location,
                                               args.older, args.younger, args.gender) for p in range(args.pages)]
         user_urls = ['https://myanimelist.net' + url
-                     for sublist in await asyncio.gather(*search_jobs) for url in sublist]
+                     for sublist in (await asyncio.gather(*search_jobs)) for url in sublist]
         user_jobs = [page_text(session, url) for url in user_urls]
         user_pages = await asyncio.gather(*user_jobs)
     total = len(user_urls)
@@ -72,7 +72,7 @@ def parse_cmd_args():
                         help="found users must be younger than this (in years)")
     parser.add_argument("-l", "--location", dest="location", type=str, default='',
                         help="found users must live here")
-    parser.add_argument("-g", "--gender", dest="gender", type=str, default='irrelevant',
+    parser.add_argument("-g", "--gender", dest="gender", type=str, default=0,
                         help="found users must be of this gender_id (0=irrelevant, 1=male, 2=female, 3=non-binary}")
     parser.add_argument("-p", "--pages", dest="pages", type=int, default=1,
                         help="how many pages of users to scrape (1 page = 24 users)")
