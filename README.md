@@ -9,7 +9,7 @@ Use at your own risk!
 * A myanimelist.net account
 * (Probably) some way to view the sqlite3 database (I recommend [DB Browser for SQLite](https://sqlitebrowser.org/))
 # Usage
-1. Run `malscrape.py` with python 3.7 (for command line arguments, view below) (You might have to make it executable first using `chmod +x malscrape.py`)
+1. Run `main.py` with python 3.7 (for command line arguments, view below) (You might want to make it executable using `chmod +x main.py`)
 2. Input your username and password when asked
 3. The scraped data will be saved in an sqlite3 database
 # Command Line Arguments
