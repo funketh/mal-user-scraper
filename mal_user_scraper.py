@@ -37,7 +37,9 @@ async def main():
     logging.basicConfig(filename='info.log', level=logging.INFO)
     args = parse_cmd_args()
     async with aiohttp.ClientSession() as session:
-        await login(session)
+        async with session.get('https://myanimelist.net/login.php') as resp:
+            csrf_token = re.search(r"<meta name=.csrf_token. content='(.+?)'>", (await resp.text())).group(1)
+        await login(session, csrf_token)
         search_jobs = [users_from_search_page(session, p, args.name, args.location,
                                               args.older, args.younger, args.gender) for p in range(args.pages)]
         user_urls = ['https://myanimelist.net' + url
@@ -91,11 +93,14 @@ def progress(count, total, status=''):
 
 
 # Web requests
-async def login(session):
+async def login(session, csrf_token):
     await session.post('https://myanimelist.net/login.php', data={
-        'action': 'login',
-        'username': input('Your myanimelist.net username: '),
+        'user_name': input('Your myanimelist.net username: '),
         'password': getpass('Your myanimelist.net password: '),
+        'cookie': 1,
+        'submit': 1,
+        'sublogin': 'Login',
+        'csrf_token': csrf_token,
     })
 
 async def users_from_search_page(session, page_num, name, location, older, younger, gender):
