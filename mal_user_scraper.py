@@ -1,13 +1,44 @@
-# NOTE: This script only scrapes Anime related data
+#!/usr/bin/env python3.7
 import asyncio
 import logging
 import re
 import sqlite3
+from argparse import ArgumentParser
 from collections import namedtuple
 from datetime import datetime, timedelta
-from typing import Optional, Sequence
+from getpass import getpass
+from typing import Sequence, Optional
 
 import aiohttp
+
+async def main():
+    args = parse_cmd_args()
+    username = input('Your myanimelist.net username: ')
+    password = getpass('Your myanimelist.net password: ')
+    for page_count in range(args.from_page, args.to_page + 1):
+        await run(page=page_count, username=username, password=password,
+                  name=args.name, older=args.older, younger=args.younger,
+                  location=args.location, gender=args.gender, db_path=args.db)
+
+def parse_cmd_args():
+    parser = ArgumentParser()
+    parser.add_argument("-n", "--name", dest="name", type=str, default='',
+                        help="found users names must match this")
+    parser.add_argument("-o", "--older", dest="older", type=int, default=0,
+                        help="found users must be older than this (in years)")
+    parser.add_argument("-y", "--younger", dest="younger", type=int, default=0,
+                        help="found users must be younger than this (in years)")
+    parser.add_argument("-l", "--location", dest="location", type=str, default='',
+                        help="found users must live here")
+    parser.add_argument("-g", "--gender", dest="gender", type=str, default=0,
+                        help="found users must be of this gender_id (0=irrelevant, 1=male, 2=female, 3=non-binary}")
+    parser.add_argument("-f", "--from", dest="from_page", type=int, default=1,
+                        help="lower boundary of the search pages to scrape (boundaries are included)")
+    parser.add_argument("-t", "--to", dest="to_page", type=int, default=1,
+                        help="upper boundary of the search pages to scrape (boundaries are included)")
+    parser.add_argument("-db", "--database", dest="db", default='users.db',
+                        help="file path of the sqlite3 database")
+    return parser.parse_args()
 
 async def run(page, username, password, name, location, older, younger, gender, db_path):
     logging.basicConfig(filename='info.log', level=logging.INFO)
@@ -25,12 +56,26 @@ async def run(page, username, password, name, location, older, younger, gender, 
         except Exception:
             logging.exception('Ignoring exception: ')
         print(users[-1])
-    if wants_to_exit(users):
-        return
     users = [u for u in users if u.name is not None]
     save_to_db(db_path, users)
 
-# Web requests
+# Helper Functions
+def extract_exceptions(sequence: Sequence):
+    new_sequence = []
+    for item in sequence:
+        if isinstance(item, Exception):
+            logging.error(f'Ignoring exception: {type(item)}')
+        else:
+            new_sequence.append(item)
+    return new_sequence
+
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
+
+
+# Web Requests
 async def login(session, username, password):
     async with session.get('https://myanimelist.net/login.php') as resp:
         csrf_token = re.search(r"<meta name=['\"]csrf_token['\"] content=['\"](.+?)['\"]>",
@@ -56,27 +101,19 @@ async def get_search_page(session, page_num, name, location, older, younger, gen
     async with session.get('https://myanimelist.net/users.php', params=params) as resp:
         return await resp.text()
 
-def users_from(page):
-    return re.findall(r'(?<=<div class="picSurround"><a href=").+?(?=">)', page)
-
 async def page_text(session, url):
     async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
         return await resp.text()
 
-def extract_exceptions(sequence: Sequence):
-    new_sequence = []
-    for item in sequence:
-        if isinstance(item, Exception):
-            logging.error(f'Ignoring exception: {type(item)}')
-        else:
-            new_sequence.append(item)
-    return new_sequence
+
+# Scraping
+def users_from(page):
+    return re.findall(r'(?<=<div class="picSurround"><a href=").+?(?=">)', page)
 
 User = namedtuple('User', ['name', 'last_online', 'gender', 'birthday', 'joined',
                            'location', 'shared', 'affinity', 'friend_count', 'days',
                            'mean_score', 'completed'])
 
-# Scraping user data
 def get_user_data(p) -> User:
     return User(
         name=safe_re_search(r"<span.*?>\s*(.*?)'s Profile", p),
@@ -156,17 +193,6 @@ def safe_float(text: str) -> Optional[float]:
     if text is not None:
         return float(text.replace(',', ''))
 
-def wants_to_exit(users):
-    if not any(u.affinity is not None for u in users):
-        answer = input('No Affinities could be fetched. '
-                       'This could mean that your login was unsuccessful. '
-                       'Do you want to save the data anyway? (y/N): ')
-        return answer.lower() not in ('y', 'yes')
-
-def chunks(l, n):
-    """Yield successive n-sized chunks from l."""
-    for i in range(0, len(l), n):
-        yield l[i:i + n]
 
 # Database
 def save_to_db(db_path, users):
@@ -188,3 +214,6 @@ def save_to_db(db_path, users):
         )''')
         db.executemany('REPLACE INTO user' + str(User._fields)
                        + ' VALUES (' + ('?,' * len(User._fields))[:-1] + ') ', users)
+
+if __name__ == '__main__':
+    asyncio.run(main())
