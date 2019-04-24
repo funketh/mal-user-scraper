@@ -51,7 +51,7 @@ async def main():
                 users.append(get_user_data(page))
             except Exception:
                 logging.exception('Ignoring exception: ')
-            progress(i, total, f"Scraped {users[-1].name}'s profile")
+            progress(i, total)
     save_to_db(args.db, users)
 
 
