@@ -1,5 +1,8 @@
 # MyAnimeList.net User Scraper
 Scrapes information from myanimelist.net profile pages and saves it into an sqlite3 database.
+# Disclaimer
+This is an inofficial script so you could get banned if you scrape to many pages of users because the script is very fast.
+Use at your own risk!
 # Requirements
 * Python version 3.7
 * `aiohttp` library
