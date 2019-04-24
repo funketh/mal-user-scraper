@@ -1,109 +1,50 @@
-# The MIT License (MIT)
-# Copyright (c) 2019 Theodor Funke
-# Copyright (c) 2016 Vladimir Ignatev
-#
-# Permission is hereby granted, free of charge, to any person obtaining
-# a copy of this software and associated documentation files (the "Software"),
-# to deal in the Software without restriction, including without limitation
-# the rights to use, copy, modify, merge, publish, distribute, sublicense,
-# and/or sell copies of the Software, and to permit persons to whom the Software
-# is furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included
-# in all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
-# PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
-# FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT
-# OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
-# OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 # NOTE: This script only scrapes Anime related data
 import asyncio
 import logging
 import re
 import sqlite3
-import sys
-from argparse import ArgumentParser
 from collections import namedtuple
 from datetime import datetime, timedelta
-from getpass import getpass
-from typing import Optional
+from typing import Optional, Sequence
 
 import aiohttp
 
-async def main():
+async def run(page, username, password, name, location, older, younger, gender, db_path):
     logging.basicConfig(filename='info.log', level=logging.INFO)
-    args = parse_cmd_args()
     async with aiohttp.ClientSession() as session:
-        async with session.get('https://myanimelist.net/login.php') as resp:
-            csrf_token = re.search(r"<meta name=.csrf_token. content='(.+?)'>", (await resp.text())).group(1)
-        await login(session, csrf_token)
-        search_jobs = [users_from_search_page(session, p, args.name, args.location,
-                                              args.older, args.younger, args.gender) for p in range(args.pages)]
-        user_urls = ['https://myanimelist.net' + url
-                     for sublist in (await asyncio.gather(*search_jobs)) for url in sublist]
+        await login(session, username, password)
+        search_page = await get_search_page(session, page, name, location,
+                                            older, younger, gender)
+        user_urls = ['https://myanimelist.net' + url for url in users_from(search_page)]
         user_jobs = [page_text(session, url) for url in user_urls]
-        user_pages = await asyncio.gather(*user_jobs)
-    total = len(user_urls)
+        user_pages = extract_exceptions(await asyncio.gather(*user_jobs, return_exceptions=True))
     users = []
-    for i, page in enumerate(user_pages):
+    for page in user_pages:
         try:
             users.append(get_user_data(page))
         except Exception:
             logging.exception('Ignoring exception: ')
-        progress(i, total)
-    try:
-        check_if_no_affinities(users)
-    except WantsToExit:
+        print(users[-1])
+    if wants_to_exit(users):
         return
-    save_to_db(args.db, users)
-
-
-# Interface
-def parse_cmd_args():
-    parser = ArgumentParser()
-    parser.add_argument("-n", "--name", dest="name", type=str, default='',
-                        help="found users names must match this")
-    parser.add_argument("-o", "--older", dest="older", type=int, default=0,
-                        help="found users must be older than this (in years)")
-    parser.add_argument("-y", "--younger", dest="younger", type=int, default=0,
-                        help="found users must be younger than this (in years)")
-    parser.add_argument("-l", "--location", dest="location", type=str, default='',
-                        help="found users must live here")
-    parser.add_argument("-g", "--gender", dest="gender", type=str, default=0,
-                        help="found users must be of this gender_id (0=irrelevant, 1=male, 2=female, 3=non-binary}")
-    parser.add_argument("-p", "--pages", dest="pages", type=int, default=1,
-                        help="how many pages of users to scrape (1 page = 24 users)")
-    parser.add_argument("-d", "--delay", dest="delay", type=float, default=0.3,
-                        help="delay in seconds between the user page requests")
-    parser.add_argument("-db", "--database",
-                        action="store_false", dest="db", default='users.db',
-                        help="file path of the sqlite3 database")
-    return parser.parse_args()
-
-def progress(count, total, status=''):
-    bar_len = 60
-    filled_len = int(round(bar_len * count / float(total)))
-    percents = round(100.0 * count / float(total), 1)
-    bar = '=' * filled_len + '-' * (bar_len - filled_len)
-    sys.stdout.write('[%s] %s%s ...%s\r' % (bar, percents, '%', status))
-    sys.stdout.flush()
-
+    users = [u for u in users if u.name is not None]
+    save_to_db(db_path, users)
 
 # Web requests
-async def login(session, csrf_token):
+async def login(session, username, password):
+    async with session.get('https://myanimelist.net/login.php') as resp:
+        csrf_token = re.search(r"<meta name=['\"]csrf_token['\"] content=['\"](.+?)['\"]>",
+                               (await resp.text())).group(1)
     await session.post('https://myanimelist.net/login.php', data={
-        'user_name': input('Your myanimelist.net username: '),
-        'password': getpass('Your myanimelist.net password: '),
+        'user_name': username,
+        'password': password,
         'cookie': 1,
         'submit': 1,
         'sublogin': 'Login',
         'csrf_token': csrf_token,
     })
 
-async def users_from_search_page(session, page_num, name, location, older, younger, gender):
+async def get_search_page(session, page_num, name, location, older, younger, gender):
     params = {
         'q': name,
         'loc': location,
@@ -113,13 +54,23 @@ async def users_from_search_page(session, page_num, name, location, older, young
         'show': str(page_num * 24),
     }
     async with session.get('https://myanimelist.net/users.php', params=params) as resp:
-        return re.findall(r'(?<=<div class="picSurround"><a href=").+?(?=">)',
-                          await resp.text())
-
-async def page_text(session, url):
-    async with session.get(url) as resp:
         return await resp.text()
 
+def users_from(page):
+    return re.findall(r'(?<=<div class="picSurround"><a href=").+?(?=">)', page)
+
+async def page_text(session, url):
+    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        return await resp.text()
+
+def extract_exceptions(sequence: Sequence):
+    new_sequence = []
+    for item in sequence:
+        if isinstance(item, Exception):
+            logging.error(f'Ignoring exception: {type(item)}')
+        else:
+            new_sequence.append(item)
+    return new_sequence
 
 User = namedtuple('User', ['name', 'last_online', 'gender', 'birthday', 'joined',
                            'location', 'shared', 'affinity', 'friend_count', 'days',
@@ -154,7 +105,6 @@ def safe_re_search(*args, **kwargs) -> Optional[str]:
     if match is None:
         return None
     return match.group(1)
-
 
 # Helper functions
 def mal_to_datetime(mal_time: str) -> Optional[datetime]:
@@ -206,24 +156,24 @@ def safe_float(text: str) -> Optional[float]:
     if text is not None:
         return float(text.replace(',', ''))
 
-
-class WantsToExit(BaseException): pass
-
-def check_if_no_affinities(users):
+def wants_to_exit(users):
     if not any(u.affinity is not None for u in users):
         answer = input('No Affinities could be fetched. '
                        'This could mean that your login was unsuccessful. '
                        'Do you want to save the data anyway? (y/N): ')
-        if answer.lower() not in ('y', 'yes'):
-            raise WantsToExit
+        return answer.lower() not in ('y', 'yes')
 
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
 
 # Database
 def save_to_db(db_path, users):
     db = sqlite3.connect(db_path)
     with db:
         db.execute('''CREATE TABLE IF NOT EXISTS user(
-            name TEXT PRIMARY KEY,
+            name TEXT PRIMARY KEY NOT NULL,
             last_online TEXT,
             gender TEXT,
             birthday TEXT,
@@ -237,7 +187,4 @@ def save_to_db(db_path, users):
             completed INTEGER
         )''')
         db.executemany('REPLACE INTO user' + str(User._fields)
-                       + ' VALUES (' + ('?,' * len(User._fields))[:-1] + ')', users)
-
-if __name__ == '__main__':
-    asyncio.run(main())
+                       + ' VALUES (' + ('?,' * len(User._fields))[:-1] + ') ', users)
