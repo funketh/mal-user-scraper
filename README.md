@@ -15,7 +15,7 @@ Use at your own risk!
 # Command Line Arguments
 ```
 usage: malscrape.py [-h] [-n NAME] [-o OLDER] [-y YOUNGER] [-l LOCATION]
-                    [-g GENDER] [-f FROM_PAGE] [-t TO_PAGE] [-db DB]
+                    [-g GENDER] [-f FROM_PAGE] [-t TO_PAGE] [-db DB] [-v]
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -37,7 +37,7 @@ optional arguments:
                         (boundaries are included)
   -db DB, --database DB
                         file path of the sqlite3 database
-
+  -v, --verbose         display every scraped user object
 ```
 # To-Do
 * favorite anime

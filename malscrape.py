@@ -1,6 +1,7 @@
 #!/usr/bin/env python3.7
 import asyncio
 import logging
+import logging.handlers
 import re
 import sqlite3
 from argparse import ArgumentParser
@@ -16,9 +17,11 @@ async def main():
     username = input('Your myanimelist.net username: ')
     password = getpass('Your myanimelist.net password: ')
     for page_count in range(args.from_page, args.to_page + 1):
-        await run(page=page_count, username=username, password=password,
+        await run(page_num=page_count, username=username, password=password,
                   name=args.name, older=args.older, younger=args.younger,
-                  location=args.location, gender=args.gender, db_path=args.db)
+                  location=args.location, gender=args.gender, db_path=args.db,
+                  verbose=args.verbose)
+        print(f'### Done with page {page_count}/{args.to_page} ###')
 
 def parse_cmd_args():
     parser = ArgumentParser()
@@ -36,17 +39,29 @@ def parse_cmd_args():
                         help="lower boundary of the search pages to scrape (boundaries are included)")
     parser.add_argument("-t", "--to", dest="to_page", type=int, default=1,
                         help="upper boundary of the search pages to scrape (boundaries are included)")
-    parser.add_argument("-db", "--database", dest="db", default='users.db',
+    parser.add_argument("-db", "--database", dest="db", type=str, default='users.db',
                         help="file path of the sqlite3 database")
+    parser.add_argument("-v", "--verbose", action='store_true',
+                        help="display every scraped user object")
     return parser.parse_args()
 
-async def run(page, username, password, name, location, older, younger, gender, db_path):
-    logging.basicConfig(filename='info.log', level=logging.INFO)
+async def run(page_num, username, password, name, location, older, younger, gender, db_path, verbose):
+    file_handler = logging.handlers.TimedRotatingFileHandler('debug.log', backupCount=10)
+    file_handler.setLevel(logging.DEBUG)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.WARNING)
+    logging.basicConfig(level=logging.DEBUG, handlers=(stream_handler, file_handler))
     async with aiohttp.ClientSession() as session:
         await login(session, username, password)
-        search_page = await get_search_page(session, page, name, location,
-                                            older, younger, gender)
+        try:
+            search_page = await get_search_page(session, page_num, name, location,
+                                                older, younger, gender)
+        except asyncio.TimeoutError:
+            logging.warning(f'Ignoring TimeoutError for search page {page_num}')
+            return
         user_urls = ['https://myanimelist.net' + url for url in users_from(search_page)]
+        if len(user_urls) == 0:
+            logging.error(f'No users could be found on page {page_num}')
         user_jobs = [page_text(session, url) for url in user_urls]
         user_pages = extract_exceptions(await asyncio.gather(*user_jobs, return_exceptions=True))
     users = []
@@ -55,16 +70,21 @@ async def run(page, username, password, name, location, older, younger, gender, 
             users.append(get_user_data(page))
         except Exception:
             logging.exception('Ignoring exception: ')
-        print(users[-1])
+        if verbose:
+            print(users[-1])
     users = [u for u in users if u.name is not None]
+    if len([u for u in users if u.affinity is not None]) == 0:
+        logging.warning(f'No affinities could be found on page {page_num}, you might not be logged in')
     save_to_db(db_path, users)
 
 # Helper Functions
 def extract_exceptions(sequence: Sequence):
     new_sequence = []
     for item in sequence:
-        if isinstance(item, Exception):
-            logging.error(f'Ignoring exception: {type(item)}')
+        if isinstance(item, TimeoutError):
+            logging.warning(f'Ignoring TimeoutError for a user page')
+        elif isinstance(item, Exception):
+            logging.error(f'Ignoring Exception for a user page')
         else:
             new_sequence.append(item)
     return new_sequence
