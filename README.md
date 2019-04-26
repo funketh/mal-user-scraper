@@ -39,5 +39,3 @@ optional arguments:
                         file path of the sqlite3 database
   -v, --verbose         display every scraped user object
 ```
-# To-Do
-* favorite anime
