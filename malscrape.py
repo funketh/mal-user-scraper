@@ -8,7 +8,7 @@ from argparse import ArgumentParser
 from collections import namedtuple
 from datetime import datetime, timedelta
 from getpass import getpass
-from typing import Sequence, Optional
+from typing import Sequence, Optional, List
 
 import aiohttp
 
@@ -69,7 +69,7 @@ async def run(page_num, username, password, name, location, older, younger, gend
         try:
             users.append(get_user_data(page))
         except Exception:
-            logging.exception('Ignoring exception: ')
+            logging.exception('Ignoring exception while scraping a user page')
         if verbose:
             print(users[-1])
     users = [u for u in users if u.name is not None]
@@ -81,10 +81,10 @@ async def run(page_num, username, password, name, location, older, younger, gend
 def extract_exceptions(sequence: Sequence):
     new_sequence = []
     for item in sequence:
-        if isinstance(item, TimeoutError):
+        if isinstance(item, asyncio.TimeoutError):
             logging.warning(f'Ignoring TimeoutError for a user page')
         elif isinstance(item, Exception):
-            logging.error(f'Ignoring Exception for a user page')
+            logging.error(f'Ignoring Exception for a user page', exc_info=item)
         else:
             new_sequence.append(item)
     return new_sequence
@@ -132,23 +132,28 @@ def users_from(page):
 
 User = namedtuple('User', ['name', 'last_online', 'gender', 'birthday', 'joined',
                            'location', 'shared', 'affinity', 'friend_count', 'days',
-                           'mean_score', 'completed'])
+                           'mean_score', 'completed', 'favorites'])
+Favorites = namedtuple('Favorites', ['anime', 'manga', 'character', 'people'])
 
 def get_user_data(p) -> User:
     return User(
-        name=safe_re_search(r"<span.*?>\s*(.*?)'s Profile", p),
-        last_online=without_seconds(mal_to_datetime(safe_re_search(r"Last Online</span>.*?>(.*?)</span>", p))),
-        gender=safe_re_search(r"Gender</span>.*?>(.*?)</span>", p),
-        birthday=to_date(mal_to_datetime(safe_re_search(r"Birthday</span>.*?>(.*?)</span>", p))),
-        location=safe_re_search(r"Location</span>.*?>(.*?)</span>", p),
-        joined=to_date(
-            mal_to_datetime(safe_re_search(r'Joined</span><span class="user-status-data di-ib fl-r">(.*?)<', p))),
-        shared=safe_int(safe_re_search(r'class="fs11">(\d+?) Shared', p)),
+        name=safe_search(r"<span.*?>\s*(.*?)'s Profile", p),
+        last_online=without_seconds(mal_to_datetime(safe_search(r"Last Online</span>.*?>(.*?)</span>", p))),
+        gender=safe_search(r"Gender</span>.*?>(.*?)</span>", p),
+        birthday=to_date(mal_to_datetime(safe_search(r"Birthday</span>.*?>(.*?)</span>", p))),
+        location=safe_search(r"Location</span>.*?>(.*?)</span>", p),
+        joined=to_date(mal_to_datetime(safe_search(r'Joined</span><span class="user-status-data di-ib fl-r">(.*?)<', p))),
+        shared=safe_int(safe_search(r'class="fs11">(\d+?) Shared', p)),
         affinity=scrape_affinity(p),
-        friend_count=safe_int(safe_re_search(r'All \(([\d,]+?)\)</a>Friends</h4>', p)),
-        days=safe_float(safe_re_search(r'Anime Stats</h5>\s*<.*?>\s*<.*?><.*?>Days: </span>([\d,]+\.*\d*)</div>', p)),
-        mean_score=safe_float(safe_re_search(r'Mean Score: </span>([\d,]+\.*\d*)', p)),
-        completed=safe_int(safe_re_search(r'Completed</a><span class="di-ib fl-r lh10">([\d,]+)', p)),
+        friend_count=safe_int(safe_search(r'All \(([\d,]+?)\)</a>Friends</h4>', p)),
+        days=safe_float(safe_search(r'Anime Stats</h5>\s*<.*?>\s*<.*?><.*?>Days: </span>([\d,]+\.*\d*)</div>', p)),
+        mean_score=safe_float(safe_search(r'Mean Score: </span>([\d,]+\.*\d*)', p)),
+        completed=safe_int(safe_search(r'Completed</a><span class="di-ib fl-r lh10">([\d,]+)', p)),
+        favorites=Favorites(anime=safe_findall(r'<div class="di-tc va-t pl8 data">\s*<a href=".+?/anime/.+?">(.+?)</a>', p),
+                            manga=safe_findall(r'<div class="di-tc va-t pl8 data">\s*<a href=".+?/manga/.+?">(.+?)</a>', p),
+                            character=safe_findall(r'<div class="di-tc va-t pl8 data">\s*<a href=".+?/character/.+?">(.+?)</a>', p),
+                            people=safe_findall(r'<div class="di-tc va-t pl8 data">\s*<a href=".+?/people/.+?">(.+?)</a>', p),
+                            ),
     )
 
 def scrape_affinity(page):
@@ -157,11 +162,14 @@ def scrape_affinity(page):
     if match:
         return float(match.group(1)) or float(match.group(2))
 
-def safe_re_search(*args, **kwargs) -> Optional[str]:
+def safe_search(*args, **kwargs) -> Optional[str]:
     match = re.search(*args, **kwargs)
     if match is None:
         return None
     return match.group(1)
+
+def safe_findall(*args, **kwargs) -> List[str]:
+    return [m.group(1) for m in re.finditer(*args, **kwargs)]
 
 # Helper functions
 def mal_to_datetime(mal_time: str) -> Optional[datetime]:
@@ -215,10 +223,11 @@ def safe_float(text: str) -> Optional[float]:
 
 
 # Database
-def save_to_db(db_path, users):
+def save_to_db(db_path, users: Sequence[User]):
     db = sqlite3.connect(db_path)
     with db:
-        db.execute('''CREATE TABLE IF NOT EXISTS user(
+        db.executescript('''
+        CREATE TABLE IF NOT EXISTS user(
             name TEXT PRIMARY KEY NOT NULL,
             last_online TEXT,
             gender TEXT,
@@ -231,9 +240,20 @@ def save_to_db(db_path, users):
             days INTEGER,
             mean_score REAL,
             completed INTEGER
-        )''')
-        db.executemany('REPLACE INTO user' + str(User._fields)
-                       + ' VALUES (' + ('?,' * len(User._fields))[:-1] + ') ', users)
+        );
+        CREATE TABLE IF NOT EXISTS favorite(
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            user TEXT NOT NULL REFERENCES user
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS favorite_index ON favorite(name, user);
+        ''')
+        db.executemany('REPLACE INTO user' + str(User._fields[:-1])
+                       + ' VALUES (' + ('?,' * len(User._fields[:-1]))[:-1] + ') ',
+                       [u[:-1] for u in users])
+        for ftype in Favorites._fields:
+            db.executemany(f'INSERT OR IGNORE INTO favorite VALUES(?, ?, ?)',
+                           [(fname, ftype, u.name) for u in users for fname in getattr(u.favorites, ftype)])
 
 if __name__ == '__main__':
     asyncio.run(main())
