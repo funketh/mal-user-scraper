@@ -63,7 +63,7 @@ async def run(page_num, username, password, name, location, older, younger, gend
         if len(user_urls) == 0:
             logging.error(f'No users could be found on page {page_num}')
         user_jobs = [page_text(session, url) for url in user_urls]
-        user_pages = extract_exceptions(await asyncio.gather(*user_jobs, return_exceptions=True))
+        user_pages = remove_exceptions(await asyncio.gather(*user_jobs, return_exceptions=True))
     users = []
     for page in user_pages:
         try:
@@ -78,16 +78,8 @@ async def run(page_num, username, password, name, location, older, younger, gend
     save_to_db(db_path, users)
 
 # Helper Functions
-def extract_exceptions(sequence: Sequence):
-    new_sequence = []
-    for item in sequence:
-        if isinstance(item, asyncio.TimeoutError):
-            logging.warning(f'Ignoring TimeoutError for a user page')
-        elif isinstance(item, Exception):
-            logging.error(f'Ignoring Exception for a user page', exc_info=item)
-        else:
-            new_sequence.append(item)
-    return new_sequence
+def remove_exceptions(sequence: Sequence):
+    return (item for item in sequence if not isinstance(item, Exception))
 
 def chunks(l, n):
     """Yield successive n-sized chunks from l."""
@@ -122,8 +114,15 @@ async def get_search_page(session, page_num, name, location, older, younger, gen
         return await resp.text()
 
 async def page_text(session, url):
-    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-        return await resp.text()
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            return await resp.text()
+    except asyncio.TimeoutError as e:
+        logging.warning(f'Ignoring asyncio.TimeoutError for {url} (known bug)')
+        return e
+    except Exception as e:
+        logging.exception(f'Ignoring unexpected Exception for {url}')
+        return e
 
 
 # Scraping
