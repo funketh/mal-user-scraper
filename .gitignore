@@ -1,4 +1,5 @@
 users.db
+Pipfile.lock
 
 # PyCharm
 .idea/
